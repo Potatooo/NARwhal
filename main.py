@@ -7,8 +7,119 @@ import time
 import urllib3
 from enum import Enum
 from collections import defaultdict
+import re
+from dateutil.parser import parse
+from bs4.element import NavigableString
+import re
 
 __author__ = 'Pawel'
+
+REGEX = []
+
+def MonthToInt(str):
+    i = 1
+    for x in "Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec".split("|"):
+        if x == str:
+            return i
+        i += 1
+    i = 1
+    for x in "January|February|March|April|May|June|July|August|September|October|November|December".split("|"):
+        if x == str:
+            return i
+        i += 1
+    return int(str)
+
+class DateData:
+    def __init__(self):
+        self.day = None
+        self.month = None
+        self.year = None
+
+class RegexFormat():
+    DAYS = []
+    DAYS.append("(1|2|3|4|5|6|7|8|9|10|11|12|13|14|15|16|17|18|19|20|21|22|23|24|25|26|27|28|29|30|31)")
+    MONTHS = []
+    MONTHS.append("(1|2|3|4|5|6|7|8|9|10|11|12)")
+    MONTHS.append("(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)")
+    MONTHS.append("(January|February|March|April|May|June|July|August|September|October|November|December)")
+    YEARS = []
+    YEARS.append("(\d{4})")
+    SEPERATORS = []
+    SEPERATORS.append(" ")
+    SEPERATORS.append(".")
+    SEPERATORS.append("-")
+    SEPERATORS.append("\/")
+
+    def __init__(self):
+        self.reg = ""
+        self._order = ["", "", ""]
+        self._size = 0
+
+    def day(self, index):
+        self.reg += RegexFormat.DAYS[index]
+        self._order[self._size] = "D"
+        self._size += 1
+        return self
+
+    def month(self, index):
+        self.reg += RegexFormat.MONTHS[index]
+        self._order[self._size] = "M"
+        self._size += 1
+        return self
+
+    def year(self, index):
+        self.reg += RegexFormat.YEARS[index]
+        self._order[self._size] = "Y"
+        self._size += 1
+        return self
+
+    def seperator(self, str):
+        if str == "/":
+            str = "\/"
+        self.reg += str
+        return self
+
+    def check(self, str):
+        n = re.search(self.reg, str)
+        if n is not None:
+            data = n.groups(1)
+            print(str)
+            print(data)
+            ret = DateData()
+            for i in range(0, 3):
+                if self._order[i] == 'D':
+                    ret.day = int(n.groups(1)[i])
+                if self._order[i] == 'M':
+                    ret.month = MonthToInt(n.groups(1)[i])
+                if self._order[i] == 'Y':
+                    ret.year = int(n.groups(1)[i])
+            print(ret.day,ret.month,ret.year)
+            print()
+            return ret
+        return None
+
+def CheckDate(str):
+    for r in REGEX:
+        n = r.check(str)
+
+REGEX.append(RegexFormat().month(0).seperator("/").day(0).seperator("/").year(0))
+REGEX.append(RegexFormat().month(1).seperator("/").year(0))
+REGEX.append(RegexFormat().year(0).seperator("-").month(0).seperator("-").day(0))
+REGEX.append(RegexFormat().day(0).seperator(". ").month(1).seperator(" ").year(0))
+REGEX.append(RegexFormat().month(1).seperator(".").day(0).seperator(".").year(0))
+REGEX.append(RegexFormat().month(1).seperator(" ").day(0).seperator(", ").year(0))
+REGEX.append(RegexFormat().month(2).seperator(" ").day(0).seperator(", ").year(0))
+REGEX.append(RegexFormat().day(0).seperator(" ").month(2).seperator(", ").year(0))
+REGEX.append(RegexFormat().month(2).seperator(" ").day(0).seperator(" ").year(0))
+REGEX.append(RegexFormat().day(0).seperator(" ").month(2).seperator(" ").year(0))
+REGEX.append(RegexFormat().month(2).seperator(" ").year(0))
+
+def parseStrDate(dateString):
+    try:
+        dateTimeObj = parse(dateString)
+        return dateTimeObj
+    except:
+        return None
 
 class StatusCode(Enum):
     UNKNOWN = 1
@@ -22,6 +133,7 @@ class NARwhalData:
         self.NAR_subtitle = ""
         self.NAR_href = ""
         self.status = StatusCode.UNKNOWN
+        self.response = -1;
 
 class NARwhal:
     DOMAIN_LINK = "http://www.oxfordjournals.org"
@@ -140,18 +252,32 @@ class NARwhal:
 
         countLock = threading.Lock()
 
+        self.done = 0
+        self.total = self.count
         def fetch_database(dbData):
             triesLeft = self.retryCount
             while(triesLeft > 0):
                 try:
                     page = requests.get(dbData.NAR_href, timeout=self.singleRequestTimeout)
+                    dbData.response = page.status_code
+                    self.done += 1
+                    print(self.done/self.total*100, "%", sep="")
                     if page.status_code >= 200 and page.status_code < 300:
                         dbData.status = StatusCode.GOOD
                     else:
                         dbData.status = StatusCode.BAD
+
+                    soup_main = BeautifulSoup(page.text, 'html.parser')
+                    text = [i for i in soup_main.recursiveChildGenerator() if type(i) == NavigableString]
+                    for t in text:
+                        if "last updated" in t:
+                            CheckDate(t)
+                            print(t,"|",dbData.NAR_href)
                     break
                 except (ConnectionError, ConnectionResetError, urllib3.exceptions.ProtocolError, requests.exceptions.ConnectionError, requests.exceptions.ConnectionError, requests.exceptions.ReadTimeout, requests.exceptions.ChunkedEncodingError, requests.exceptions.InvalidSchema, requests.exceptions.ChunkedEncodingError, socket.timeout, http.client.IncompleteRead, requests.exceptions.ContentDecodingError) as e:
                     pass
+                except UnicodeEncodeError:
+                    break #unable to read website
                 triesLeft -= 1
                 time.sleep(self.retrySleep)
 
@@ -172,7 +298,9 @@ class NARwhal:
         print("UNKNOWN:\t", statusDict[StatusCode.UNKNOWN])
 
 def main():
-    narv = NARwhal(retryCount=5, retrySleep=5, singleRequestTimeout=60, limit=25)
-
+    narv = NARwhal(retryCount=2, retrySleep=5, singleRequestTimeout=15, limit=-1)
 main()
+
+
+# kompatybilnosc 2.7warto za 5pkt
 
