@@ -1,4 +1,6 @@
 import http
+from itertools import islice
+import pprint
 import socket
 import requests
 from bs4 import BeautifulSoup
@@ -7,7 +9,6 @@ import time
 import urllib3
 from enum import Enum
 from collections import defaultdict
-import re
 from dateutil.parser import parse
 from bs4.element import NavigableString
 import re
@@ -132,8 +133,46 @@ class NARwhalData:
         self.NAR_title = ""
         self.NAR_subtitle = ""
         self.NAR_href = ""
+        self.category = ""
+        self.subcategory = ""
         self.status = StatusCode.UNKNOWN
-        self.response = -1;
+        self.response = -1
+
+class NARwhalResults:
+    def __init__(self, data):
+        self._data = data
+
+    def filterByCategory(self, categoryName):
+        self._data[:] = [x for x in self._data if x.category==categoryName]
+
+    def filterBySubcategory(self, subcategoryName):
+        self._data[:] = [x for x in self._data if x.subcategoryName==subcategoryName]
+
+    def count_statuses(self):
+        result = {}
+        for i in self._data:
+            if i.category not in result:
+                result[i.category] = {}
+            if i.subcategory not in result[i.category]:
+                result[i.category][i.subcategory] = {}
+            if StatusCode.GOOD not in result[i.category][i.subcategory]:
+                result[i.category][i.subcategory]["StatusCode.GOOD"]=0
+            if StatusCode.BAD not in result[i.category][i.subcategory]:
+                result[i.category][i.subcategory]["StatusCode.BAD"]=0
+            if StatusCode.UNKNOWN not in result[i.category][i.subcategory]:
+                result[i.category][i.subcategory]["StatusCode.UNKNOWN"]=0
+            result[i.category][i.subcategory][i.status] += 1
+
+        #for key_category in result:
+        #    print("Category:" + key_category)
+        #    for key_subcategory in result[key_category]:
+        #        if key_subcategory != "":
+        #            print("Subcategory:" + key_subcategory)
+        #        for key_status in result[key_category][key_subcategory]:
+        #            print(key_status, result[key_category][key_subcategory][key_status])
+        pprint.pprint(result)
+        return result
+
 
 class NARwhal:
     DOMAIN_LINK = "http://www.oxfordjournals.org"
@@ -142,47 +181,93 @@ class NARwhal:
     SUBCATEGORY_PREFIX = "/nar/database/subcat/"
     SUMMARY_PREFIX = "/nar/database/summary/"
 
-    def __init__(self, retryCount=5, retrySleep=5, singleRequestTimeout=60, limit=-1):
-        self.retryCount = retryCount
-        self.retrySleep = retrySleep
-        self.singleRequestTimeout = singleRequestTimeout
-        self.limit = limit
+    # NARwhal
+    # retryCount=5
+    # - maximum amount of tries a page should be visited after failed requests
+    # retrySleep=5
+    # - time between retries
+    # singleRequestTimeout=60
+    # - time after connection is if no response is received during that time
+    # limit=-1
+    # - maximum amount of databases to visit. -1 means no limit.
+    # skip=0
+    # - amount of links that should be skipped initially.
+    # filename=""
+    # - if not empty, will try to load data from the file instead of visiting links again
+    def __init__(self, retryCount=5, retrySleep=5, singleRequestTimeout=60, limit=-1, skip=0, fileName=""):
+        if fileName != "":
+            self._load(fileName)
+            return
 
-        self.visited = set()
-        self.cat_subcat_links = set()
-        self.summary_links = set()
+        self.setting_retryCount = retryCount
+        self.setting_retrySleep = retrySleep
+        self.setting_singleRequestTimeout = singleRequestTimeout
+        self.setting_limit = limit
+        self._setting_skip = skip
 
+        # set to check if a page has already been visited
+        self._visited = set()
+        # links to all NAR summaries
+        self._summary_links = set()
+
+        # number of summaries found, used to print out progress.
         self.count = 0
 
         self.data = []
-        self._populate()
+        self._fetchSummaryLinks()
         self._visitSummaries()
 
         self._visitDatabases()
 
-    def _isVisited(self, url):
-        return url in self.visited
+    # loads pregenerated data from a file instead of fetching results again
+    def _load(self, fileName):
+        self.data = []
+        N = int(sum(1 for line in open(fileName))/9)
+        with open(fileName, 'r') as f:
 
+            for i in range(0, N):
+                nextData = NARwhalData()
+                (f.readline().strip())
+                nextData.NAR_summary_url = (f.readline().strip())
+                nextData.NAR_title = (f.readline().strip())
+                nextData.NAR_subtitle = (f.readline().strip())
+                nextData.NAR_href = (f.readline().strip())
+                nextData.category = (f.readline().strip())
+                nextData.subcategory = (f.readline().strip())
+                nextData.status = (f.readline().strip())
+                nextData.response = (f.readline().strip())
+                self.data.append(nextData)
+
+    # Checks set if URL has already been visited to prevent infinite looping.
+    def _isVisited(self, url):
+        return url in self._visited
+
+    # Visits an URL and returns its contents.
     def _visitUrl(self, url):
-        self.visited.add(url)
+        self._visited.add(url)
         page = requests.get(url)
         soup = BeautifulSoup(page.text.encode('utf-8').decode('ascii', 'ignore'), 'html.parser')
         return soup
 
-    def _populate(self):
+    # Finds all summary links from NAR website and stores them.
+    def _fetchSummaryLinks(self):
         start = time.time()
 
         soup_main = self._visitUrl(self.SEARCH_ROOT_LINK)
         for link in soup_main.find_all('a'):
             href = link.get('href')
             if(href.startswith(self.SUMMARY_PREFIX)):
-                self.summary_links.add(self.DOMAIN_LINK + href)
-                if(len(self.summary_links) >= self.limit and self.limit >= 0):
+                if self._setting_skip>0:
+                    self._setting_skip -= 1
+                    continue
+                self._summary_links.add(self.DOMAIN_LINK + href)
+                if(len(self._summary_links) >= self.setting_limit and self.setting_limit >= 0):
                     break
 
         print("Fetched links to subpages.")
         print("Time:", time.time() - start)
 
+    # extracts data from a single summary on NAR website and fetches basic data from it
     def _extractData(self, url, pageText):
         nextData = NARwhalData()
 
@@ -197,6 +282,20 @@ class NARwhal:
         soup_other_line = BeautifulSoup(str(elements_bodytext[1]), 'html.parser')
         other_link = soup_other_line.find('a').get('href')
 
+        try:
+            soup_category = BeautifulSoup(str(element_paper), 'html.parser').find('div', {'class': 'category'})
+            soup_category2 = BeautifulSoup(str(soup_category), 'html.parser').find('a').getText()
+            nextData.category = soup_category2
+        except Exception as e:
+            pass
+
+        try:
+            soup_subcategory = BeautifulSoup(str(element_paper), 'html.parser').find('div', {'class': 'subcategory'})
+            soup_subcategory2 = BeautifulSoup(str(soup_subcategory), 'html.parser').find('a').getText()
+            nextData.subcategory = soup_subcategory2
+        except Exception as e:
+            pass
+
         nextData.NAR_summary_url = url
         nextData.NAR_title = element_title.getText()
         nextData.NAR_subtitle = elements_bodytext[0].getText()[2:-2]
@@ -204,6 +303,7 @@ class NARwhal:
 
         return nextData
 
+    # visits all summaries that were found extracts data from them
     def _visitSummaries(self):
         start = time.time()
 
@@ -211,10 +311,10 @@ class NARwhal:
         countLock = threading.Lock()
 
         def fetch_summary(url):
-            triesLeft = self.retryCount
+            triesLeft = self.setting_retryCount
             while(triesLeft > 0):
                 try:
-                    page = requests.get(url, timeout=self.singleRequestTimeout)
+                    page = requests.get(url, timeout=self.setting_singleRequestTimeout)
                     nextData = self._extractData(url, page.text.encode('utf-8').decode('ascii', 'ignore'))
                     try:
                         countLock.acquire()
@@ -234,9 +334,9 @@ class NARwhal:
                         countLock.release()
                     break
                 triesLeft -= 1
-                time.sleep(self.retrySleep)
+                time.sleep(self.setting_retrySleep)
 
-        threads = [threading.Thread(target=fetch_summary, args=(url,)) for url in self.summary_links]
+        threads = [threading.Thread(target=fetch_summary, args=(url,)) for url in self._summary_links]
         [thread.start() for thread in threads]
         [thread.join() for thread in threads]
 
@@ -247,6 +347,7 @@ class NARwhal:
         print("Elapsed Time: %s" % (time.time() - start))
         print("Count:", self.count)
 
+    # visits all links to databases that were found on the NAR website
     def _visitDatabases(self):
         start = time.time()
 
@@ -255,10 +356,10 @@ class NARwhal:
         self.done = 0
         self.total = self.count
         def fetch_database(dbData):
-            triesLeft = self.retryCount
+            triesLeft = self.setting_retryCount
             while(triesLeft > 0):
                 try:
-                    page = requests.get(dbData.NAR_href, timeout=self.singleRequestTimeout)
+                    page = requests.get(dbData.NAR_href, timeout=self.setting_singleRequestTimeout)
                     dbData.response = page.status_code
                     self.done += 1
                     print(self.done/self.total*100, "%", sep="")
@@ -279,7 +380,7 @@ class NARwhal:
                 except UnicodeEncodeError:
                     break #unable to read website
                 triesLeft -= 1
-                time.sleep(self.retrySleep)
+                time.sleep(self.setting_retrySleep)
 
         threads = [threading.Thread(target=fetch_database, args=(db,)) for db in self.data]
         [thread.start() for thread in threads]
@@ -297,8 +398,52 @@ class NARwhal:
         print("BAD:    \t", statusDict[StatusCode.BAD])
         print("UNKNOWN:\t", statusDict[StatusCode.UNKNOWN])
 
+    # stores results in a text file
+    def save(self):
+        file = open('data.txt', 'w')
+        for i in self.data:
+            file.write("-----\n")
+            file.write(i.NAR_summary_url)
+            file.write("\n")
+            file.write(i.NAR_title)
+            file.write("\n")
+            file.write(i.NAR_subtitle)
+            file.write("\n")
+            file.write(i.NAR_href)
+            file.write("\n")
+            file.write(i.category)
+            file.write("\n")
+            file.write(i.subcategory)
+            file.write("\n")
+            file.write(str(i.status))
+            file.write("\n")
+            file.write(str(i.response))
+            file.write("\n")
+        file.close()
+
+    # creates a new object of results that can be filtered
+    def results(self):
+        return NARwhalResults(self.data)
+
+    # shows all results in a primitive form
+    def display(self):
+        for i in self.data:
+            print("NAR_summary_url", i.NAR_summary_url)
+            print("NAR_title", i.NAR_title)
+            print("NAR_subtitle", i.NAR_subtitle)
+            print("NAR_href", i.NAR_href)
+            print("category", i.category)
+            print("subcategory", i.subcategory)
+            print("status", i.status)
+            print("response", i.response)
+
 def main():
-    narv = NARwhal(retryCount=2, retrySleep=5, singleRequestTimeout=15, limit=-1)
+    narv = NARwhal(fileName="data.txt")
+    narv.results().count_statuses()
+
+    #narv = NARwhal(retryCount=2, retrySleep=5, singleRequestTimeout=15, limit=-1, skip=0, fileName="")
+    #narv.save()
+
 main()
 
 
