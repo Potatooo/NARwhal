@@ -1,5 +1,5 @@
+from enum import Enum
 import http
-from itertools import islice
 import pprint
 import socket
 import requests
@@ -7,11 +7,11 @@ from bs4 import BeautifulSoup
 import threading
 import time
 import urllib3
-from enum import Enum
 from collections import defaultdict
 from dateutil.parser import parse
 from bs4.element import NavigableString
 import re
+import datetime
 
 __author__ = 'Pawel'
 
@@ -102,6 +102,8 @@ class RegexFormat():
 def CheckDate(str):
     for r in REGEX:
         n = r.check(str)
+        if n is not None:
+            return n
 
 REGEX.append(RegexFormat().month(0).seperator("/").day(0).seperator("/").year(0))
 REGEX.append(RegexFormat().month(1).seperator("/").year(0))
@@ -122,11 +124,6 @@ def parseStrDate(dateString):
     except:
         return None
 
-class StatusCode(Enum):
-    UNKNOWN = 1
-    GOOD = 2
-    BAD = 3
-
 class NARwhalData:
     def __init__(self):
         self.NAR_summary_url = ""
@@ -135,8 +132,56 @@ class NARwhalData:
         self.NAR_href = ""
         self.category = ""
         self.subcategory = ""
-        self.status = StatusCode.UNKNOWN
+        self.status = "UNKNOWN"
         self.response = -1
+        self.update_day = -1
+        self.update_month = -1
+        self.update_year = -1
+        self.firstYear = -1
+        self.lastYear = -1
+
+    def display(self):
+        print("NAR_summary_url", self.NAR_summary_url)
+        print("NAR_title", self.NAR_title)
+        print("NAR_subtitle", self.NAR_subtitle)
+        print("NAR_href", self.NAR_href)
+        print("category", self.category)
+        print("subcategory", self.subcategory)
+        print("status", self.status)
+        print("response", self.response)
+        print("updated D/M/Y: ", end="")
+        if self.update_day != -1:
+            print(self.update_day, ".", end="", sep="")
+        else:
+            print("??.", end="")
+        if self.update_month != -1:
+            print(self.update_month, ".", end="", sep="")
+        else:
+            print("??.", end="")
+        if self.update_year != -1:
+            print(self.update_year)
+        else:
+            print("????")
+        if self.firstYear != -1:
+            print("first article year:", self.firstYear)
+        if self.lastYear != -1:
+            print("last article year:", self.lastYear)
+
+class RemoveCondition(Enum):
+    NO_CATEGORY = 0
+    NO_SUBCATEGORY = 1
+    NO_TITLE = 2
+    NO_SUBTITLE = 3
+    BAD_STATUS = 4
+    UNKNOWN_STATUS = 5
+    BAD_OR_UNKNOWN_STATUS = 6
+    RESPONSE_NOT_SUCCESS = 7
+    NO_UPDATE_DAY = 8
+    NO_UPDATE_MONTH = 9
+    NO_UPDATE_YEAR = 10
+    NO_ARTICLE_YEAR = 11
+    NO_UPDATE_DAY_AND_NO_MONTH_AND_NO_YEAR = 12
+    NO_UPDATE_DATA_AT_ALL = 13
 
 class NARwhalResults:
     def __init__(self, data):
@@ -144,32 +189,92 @@ class NARwhalResults:
 
     def filterByCategory(self, categoryName):
         self._data[:] = [x for x in self._data if x.category==categoryName]
+        return self
 
     def filterBySubcategory(self, subcategoryName):
         self._data[:] = [x for x in self._data if x.subcategoryName==subcategoryName]
+        return self
 
-    def count_statuses(self):
+    def display(self):
+        for i in self._data:
+            i.display()
+
+    def getData(self):
+        return list(self._data)
+
+    def orderByFirstArticleASC(self):
+        self._data[:] = sorted(self._data, key=lambda data: data.firstYear)
+        return self
+
+    def orderByFirstArticleDESC(self):
+        self._data[:] = sorted(self._data, key=lambda data: data.firstYear, reverse=True)
+        return self
+
+    def orderByLastArticleASC(self):
+        self._data[:] = sorted(self._data, key=lambda data: data.lastYear)
+        return self
+
+    def orderByLastArticleDESC(self):
+        self._data[:] = sorted(self._data, key=lambda data: data.lastYear, reverse=True)
+        return self
+
+    def removeIf(self, filter):
+        if filter == RemoveCondition.NO_CATEGORY:
+            self._data[:] = [x for x in self._data if x.category!='']
+        if filter == RemoveCondition.NO_SUBCATEGORY:
+            self._data[:] = [x for x in self._data if x.subcategory!='']
+        if filter == RemoveCondition.NO_TITLE:
+            self._data[:] = [x for x in self._data if x.NAR_title!='']
+        if filter == RemoveCondition.NO_SUBTITLE:
+            self._data[:] = [x for x in self._data if x.NAR_subtitle!='']
+        if filter == RemoveCondition.BAD_STATUS:
+            self._data[:] = [x for x in self._data if x.status!="BAD"]
+        if filter == RemoveCondition.UNKNOWN_STATUS:
+            self._data[:] = [x for x in self._data if x.status!="UNKNOWN"]
+        if filter == RemoveCondition.BAD_OR_UNKNOWN_STATUS:
+            self._data[:] = [x for x in self._data if x.status!="BAD"]
+            self._data[:] = [x for x in self._data if x.status!="UNKNOWN"]
+        if filter == RemoveCondition.RESPONSE_NOT_SUCCESS:
+            self._data[:] = [x for x in self._data if x.response>=200]
+            self._data[:] = [x for x in self._data if x.response<300]
+        if filter == RemoveCondition.NO_UPDATE_DAY:
+            self._data[:] = [x for x in self._data if x.update_day!=-1]
+        if filter == RemoveCondition.NO_UPDATE_MONTH:
+            self._data[:] = [x for x in self._data if x.update_month!=-1]
+        if filter == RemoveCondition.NO_UPDATE_YEAR:
+            self._data[:] = [x for x in self._data if x.update_year!=-1]
+        if filter == RemoveCondition.NO_ARTICLE_YEAR:
+            self._data[:] = [x for x in self._data if x.firstYear!=-1]
+            self._data[:] = [x for x in self._data if x.lastYear!=-1]
+        if filter == RemoveCondition.NO_UPDATE_DAY_AND_NO_MONTH_AND_NO_YEAR:
+            self._data[:] = [x for x in self._data if x.update_day!=-1]
+            self._data[:] = [x for x in self._data if x.update_month!=-1]
+            self._data[:] = [x for x in self._data if x.update_year!=-1]
+        if filter == RemoveCondition.NO_UPDATE_DATA_AT_ALL:
+            self._data[:] = [x for x in self._data if x.update_day!=-1 and x.update_month!=-1 and x.update_year!=-1]
+        return self
+
+    def count_status(self):
+        result = {"GOOD":0, "BAD":0, "UNKNOWN":0}
+        for i in self._data:
+            result[i.status] += 1
+        pprint.pprint(result)
+        return result
+
+    def count_statusSummary(self):
         result = {}
         for i in self._data:
             if i.category not in result:
                 result[i.category] = {}
             if i.subcategory not in result[i.category]:
                 result[i.category][i.subcategory] = {}
-            if StatusCode.GOOD not in result[i.category][i.subcategory]:
-                result[i.category][i.subcategory]["StatusCode.GOOD"]=0
-            if StatusCode.BAD not in result[i.category][i.subcategory]:
-                result[i.category][i.subcategory]["StatusCode.BAD"]=0
-            if StatusCode.UNKNOWN not in result[i.category][i.subcategory]:
-                result[i.category][i.subcategory]["StatusCode.UNKNOWN"]=0
+            if "GOOD" not in result[i.category][i.subcategory]:
+                result[i.category][i.subcategory]["GOOD"]=0
+            if "BAD" not in result[i.category][i.subcategory]:
+                result[i.category][i.subcategory]["BAD"]=0
+            if "UNKNOWN" not in result[i.category][i.subcategory]:
+                result[i.category][i.subcategory]["UNKNOWN"]=0
             result[i.category][i.subcategory][i.status] += 1
-
-        #for key_category in result:
-        #    print("Category:" + key_category)
-        #    for key_subcategory in result[key_category]:
-        #        if key_subcategory != "":
-        #            print("Subcategory:" + key_subcategory)
-        #        for key_status in result[key_category][key_subcategory]:
-        #            print(key_status, result[key_category][key_subcategory][key_status])
         pprint.pprint(result)
         return result
 
@@ -222,7 +327,7 @@ class NARwhal:
     # loads pregenerated data from a file instead of fetching results again
     def _load(self, fileName):
         self.data = []
-        N = int(sum(1 for line in open(fileName))/9)
+        N = int(sum(1 for line in open(fileName))/14)
         with open(fileName, 'r') as f:
 
             for i in range(0, N):
@@ -236,6 +341,11 @@ class NARwhal:
                 nextData.subcategory = (f.readline().strip())
                 nextData.status = (f.readline().strip())
                 nextData.response = (f.readline().strip())
+                nextData.update_day = int((f.readline().strip()))
+                nextData.update_month = int((f.readline().strip()))
+                nextData.update_year = int((f.readline().strip()))
+                nextData.firstYear = int((f.readline().strip()))
+                nextData.lastYear = int((f.readline().strip()))
                 self.data.append(nextData)
 
     # Checks set if URL has already been visited to prevent infinite looping.
@@ -364,15 +474,30 @@ class NARwhal:
                     self.done += 1
                     print(self.done/self.total*100, "%", sep="")
                     if page.status_code >= 200 and page.status_code < 300:
-                        dbData.status = StatusCode.GOOD
+                        dbData.status = "GOOD"
                     else:
-                        dbData.status = StatusCode.BAD
+                        dbData.status = "BAD"
 
                     soup_main = BeautifulSoup(page.text, 'html.parser')
                     text = [i for i in soup_main.recursiveChildGenerator() if type(i) == NavigableString]
+                    currentYear = datetime.datetime.now().year
+                    yearRange = range(1900, currentYear+1)
                     for t in text:
+                        for y in yearRange:
+                            if str(y) in t:
+                                if dbData.lastYear==-1 or dbData.lastYear<y:
+                                    dbData.lastYear=y
+                                if dbData.firstYear==-1 or dbData.firstYear>y:
+                                    dbData.firstYear=y
                         if "last updated" in t:
-                            CheckDate(t)
+                            result = CheckDate(t)
+                            if result is not None:
+                                if result.day is not None:
+                                    dbData.update_day = result.day
+                                if result.month is not None:
+                                    dbData.update_month = result.month
+                                if result.year is not None:
+                                    dbData.update_year = result.year
                             print(t,"|",dbData.NAR_href)
                     break
                 except (ConnectionError, ConnectionResetError, urllib3.exceptions.ProtocolError, requests.exceptions.ConnectionError, requests.exceptions.ConnectionError, requests.exceptions.ReadTimeout, requests.exceptions.ChunkedEncodingError, requests.exceptions.InvalidSchema, requests.exceptions.ChunkedEncodingError, socket.timeout, http.client.IncompleteRead, requests.exceptions.ContentDecodingError) as e:
@@ -394,9 +519,9 @@ class NARwhal:
             statusDict[db.status] += 1
 
         print("STATUS:")
-        print("GOOD:   \t", statusDict[StatusCode.GOOD])
-        print("BAD:    \t", statusDict[StatusCode.BAD])
-        print("UNKNOWN:\t", statusDict[StatusCode.UNKNOWN])
+        print("GOOD:   \t", statusDict["GOOD"])
+        print("BAD:    \t", statusDict["BAD"])
+        print("UNKNOWN:\t", statusDict["UNKNOWN"])
 
     # stores results in a text file
     def save(self):
@@ -419,6 +544,16 @@ class NARwhal:
             file.write("\n")
             file.write(str(i.response))
             file.write("\n")
+            file.write(str(i.update_day))
+            file.write("\n")
+            file.write(str(i.update_month))
+            file.write("\n")
+            file.write(str(i.update_year))
+            file.write("\n")
+            file.write(str(i.firstYear))
+            file.write("\n")
+            file.write(str(i.lastYear))
+            file.write("\n")
         file.close()
 
     # creates a new object of results that can be filtered
@@ -428,24 +563,24 @@ class NARwhal:
     # shows all results in a primitive form
     def display(self):
         for i in self.data:
-            print("NAR_summary_url", i.NAR_summary_url)
-            print("NAR_title", i.NAR_title)
-            print("NAR_subtitle", i.NAR_subtitle)
-            print("NAR_href", i.NAR_href)
-            print("category", i.category)
-            print("subcategory", i.subcategory)
-            print("status", i.status)
-            print("response", i.response)
+            i.display()
+
 
 def main():
     narv = NARwhal(fileName="data.txt")
-    narv.results().count_statuses()
+    r = narv.results()
+
+    r.count_status()
+
+    r.removeIf(RemoveCondition.BAD_OR_UNKNOWN_STATUS)
+    r.removeIf(RemoveCondition.NO_UPDATE_DATA_AT_ALL)
+    r.removeIf(RemoveCondition.NO_ARTICLE_YEAR)
+    r.orderByFirstArticleASC()
+    r.orderByFirstArticleDESC()
+    r.display()
+    r.count_status()
 
     #narv = NARwhal(retryCount=2, retrySleep=5, singleRequestTimeout=15, limit=-1, skip=0, fileName="")
     #narv.save()
 
 main()
-
-
-# kompatybilnosc 2.7warto za 5pkt
-
