@@ -124,6 +124,51 @@ def parseStrDate(dateString):
     except:
         return None
 
+# NARwhalData
+# contains information for a single database
+#
+# NAR_summary_url
+# - link to url on NAR website
+# - Default: "" (empty string)
+# NAR_title
+# - database title on NAR website
+# - Default: "" (empty string)
+# NAR_subtitle
+# - database subtitle on NAR website
+# - Default: "" (empty string)
+# NAR_href
+# - actual link to database found on NAR website
+# - Default: "" (empty string)
+# category
+# - category found on NAR website
+# - Default: "" (empty string)
+# subcategory
+# - subcategory found on NAR website
+# - Default: "" (empty string)
+# status
+# - GOOD, BAD or UNKNOWN
+# - GOOD if response was between [200,300)
+# - BAD if response was anything else
+# - UNKNOWN is there was no response at all (e.g. timeout)
+# - Default: "UNKNOWN" (string)
+# response
+# - HTTP response from database website
+# - Default: -1
+# update_day
+# - estimated last updated day
+# - Default: -1
+# update_month
+# - estimated last updated month
+# - Default: -1
+# update_year
+# - estimated last updated year
+# - Default: -1
+# firstYear
+# - estimated year of first article
+# - Default: -1
+# lastYear
+# - estimated year of last article
+# - Default: -1
 class NARwhalData:
     def __init__(self):
         self.NAR_summary_url = ""
@@ -140,6 +185,7 @@ class NARwhalData:
         self.firstYear = -1
         self.lastYear = -1
 
+    #displays object fields in a simple way
     def display(self):
         print("NAR_summary_url", self.NAR_summary_url)
         print("NAR_title", self.NAR_title)
@@ -167,6 +213,7 @@ class NARwhalData:
         if self.lastYear != -1:
             print("last article year:", self.lastYear)
 
+#used for filtering results
 class RemoveCondition(Enum):
     NO_CATEGORY = 0
     NO_SUBCATEGORY = 1
@@ -187,37 +234,48 @@ class NARwhalResults:
     def __init__(self, data):
         self._data = data
 
+    #filters data results by category name. Keeps categories with provided name
     def filterByCategory(self, categoryName):
         self._data[:] = [x for x in self._data if x.category==categoryName]
         return self
 
+    #filters data results by subcategory name. Keeps subcategories with provided name
     def filterBySubcategory(self, subcategoryName):
         self._data[:] = [x for x in self._data if x.subcategoryName==subcategoryName]
         return self
 
+    #displays all NARwhalData in this object
     def display(self):
         for i in self._data:
             i.display()
 
+    #returns a copy of NARwhalData objects in this object
     def getData(self):
         return list(self._data)
 
+    #orders by first article, ascending
     def orderByFirstArticleASC(self):
         self._data[:] = sorted(self._data, key=lambda data: data.firstYear)
         return self
 
+    #orders by first article, descending
     def orderByFirstArticleDESC(self):
         self._data[:] = sorted(self._data, key=lambda data: data.firstYear, reverse=True)
         return self
 
+    #orders by last article, ascending
     def orderByLastArticleASC(self):
         self._data[:] = sorted(self._data, key=lambda data: data.lastYear)
         return self
 
+    #orders by last article, descending
     def orderByLastArticleDESC(self):
         self._data[:] = sorted(self._data, key=lambda data: data.lastYear, reverse=True)
         return self
 
+    #removes data from this object by given condition
+    #filter
+    # - RemoveCondition enum
     def removeIf(self, filter):
         if filter == RemoveCondition.NO_CATEGORY:
             self._data[:] = [x for x in self._data if x.category!='']
@@ -254,6 +312,7 @@ class NARwhalResults:
             self._data[:] = [x for x in self._data if x.update_day!=-1 and x.update_month!=-1 and x.update_year!=-1]
         return self
 
+    #counts statuses, prints them and returns a dictonary
     def count_status(self):
         result = {"GOOD":0, "BAD":0, "UNKNOWN":0}
         for i in self._data:
@@ -261,6 +320,7 @@ class NARwhalResults:
         pprint.pprint(result)
         return result
 
+    #counts statuses, prints them and returns a dictonary grouped by categories and subcategories
     def count_statusSummary(self):
         result = {}
         for i in self._data:
@@ -287,6 +347,12 @@ class NARwhal:
     SUMMARY_PREFIX = "/nar/database/summary/"
 
     # NARwhal
+    # loadFromNARwebsite or load
+    # must be called directly after creating this object
+    def __init__(self):
+        pass
+
+    # Loads data from NAR website
     # retryCount=5
     # - maximum amount of tries a page should be visited after failed requests
     # retrySleep=5
@@ -297,13 +363,7 @@ class NARwhal:
     # - maximum amount of databases to visit. -1 means no limit.
     # skip=0
     # - amount of links that should be skipped initially.
-    # filename=""
-    # - if not empty, will try to load data from the file instead of visiting links again
-    def __init__(self, retryCount=5, retrySleep=5, singleRequestTimeout=60, limit=-1, skip=0, fileName=""):
-        if fileName != "":
-            self._load(fileName)
-            return
-
+    def loadFromNARwebsite(self, retryCount=5, retrySleep=5, singleRequestTimeout=60, limit=-1, skip=0):
         self.setting_retryCount = retryCount
         self.setting_retrySleep = retrySleep
         self.setting_singleRequestTimeout = singleRequestTimeout
@@ -324,8 +384,12 @@ class NARwhal:
 
         self._visitDatabases()
 
-    # loads pregenerated data from a file instead of fetching results again
-    def _load(self, fileName):
+
+    # Loads pregenerated data from a file instead of fetching results again
+    # filename
+    # - will try to load data from the file instead of visiting links again
+    # - assumes file format is correct
+    def load(self, fileName):
         self.data = []
         N = int(sum(1 for line in open(fileName))/14)
         with open(fileName, 'r') as f:
@@ -450,7 +514,6 @@ class NARwhal:
         [thread.start() for thread in threads]
         [thread.join() for thread in threads]
 
-
         for i in self.data:
             print(i.NAR_summary_url, i.NAR_title, i.NAR_subtitle, i.NAR_href)
         print("Fetched links to databases.")
@@ -524,8 +587,10 @@ class NARwhal:
         print("UNKNOWN:\t", statusDict["UNKNOWN"])
 
     # stores results in a text file
-    def save(self):
-        file = open('data.txt', 'w')
+    # fileName
+    # - name of file to save the data
+    def save(self, fileName):
+        file = open(fileName, 'w')
         for i in self.data:
             file.write("-----\n")
             file.write(i.NAR_summary_url)
@@ -565,22 +630,45 @@ class NARwhal:
         for i in self.data:
             i.display()
 
-
 def main():
-    narv = NARwhal(fileName="data.txt")
+    #Fetches data from NAR website and database websites and stores results in a file
+    #Following 3 lines can be commented out after fetching data, loading data from file is a lot faster
+    #It can take about 5-10 minutes to fetch results from NAR website.
+    narv = NARwhal()
+    narv.loadFromNARwebsite(retryCount=2, retrySleep=5, singleRequestTimeout=15, limit=-1, skip=0,)
+    narv.save("data.txt")
+
+    #Loads data from a file.
+    narv = NARwhal()
+    narv.load("data.txt")
+
+    #returns a copy of results, leaving data in narv unchanged
     r = narv.results()
-
+    #returns the number of GOOD, BAD and UNKNOWN databases.
     r.count_status()
 
+    #optional data filtering, changes the original array
     r.removeIf(RemoveCondition.BAD_OR_UNKNOWN_STATUS)
-    r.removeIf(RemoveCondition.NO_UPDATE_DATA_AT_ALL)
-    r.removeIf(RemoveCondition.NO_ARTICLE_YEAR)
+    #this can be chained
+    r.removeIf(RemoveCondition.NO_UPDATE_DATA_AT_ALL).removeIf(RemoveCondition.NO_ARTICLE_YEAR)
+
+    #optional sorting
     r.orderByFirstArticleASC()
+    #sorting again will overwrite any previous sorting
     r.orderByFirstArticleDESC()
+    r.orderByLastArticleDESC()
+    r.orderByLastArticleASC()
+
+    #displays results in a simple way
     r.display()
+
+    #returns a copy of an array containing NARwhalData objects.
+    r.getData()
+
+    #returns the number of GOOD, BAD and UNKNOWN databases after filtering
     r.count_status()
 
-    #narv = NARwhal(retryCount=2, retrySleep=5, singleRequestTimeout=15, limit=-1, skip=0, fileName="")
-    #narv.save()
+    #summary of statuses, in a dict object. Also provides information about categories and subcategories.
+    r.count_statusSummary()
 
 main()
