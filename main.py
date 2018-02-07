@@ -15,8 +15,10 @@ import datetime
 
 __author__ = 'Pawel'
 
+#constant holding date regexes
 REGEX = []
 
+#tries to "cast" a string into an integer from [1 to 12] representing months
 def MonthToInt(str):
     i = 1
     for x in "Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec".split("|"):
@@ -30,12 +32,14 @@ def MonthToInt(str):
         i += 1
     return int(str)
 
+#class that holds day,month,year.
 class DateData:
     def __init__(self):
         self.day = None
         self.month = None
         self.year = None
 
+#helper class to create date regexes
 class RegexFormat():
     DAYS = []
     DAYS.append("(1|2|3|4|5|6|7|8|9|10|11|12|13|14|15|16|17|18|19|20|21|22|23|24|25|26|27|28|29|30|31)")
@@ -84,8 +88,6 @@ class RegexFormat():
         n = re.search(self.reg, str)
         if n is not None:
             data = n.groups(1)
-            print(str)
-            print(data)
             ret = DateData()
             for i in range(0, 3):
                 if self._order[i] == 'D':
@@ -94,8 +96,6 @@ class RegexFormat():
                     ret.month = MonthToInt(n.groups(1)[i])
                 if self._order[i] == 'Y':
                     ret.year = int(n.groups(1)[i])
-            print(ret.day,ret.month,ret.year)
-            print()
             return ret
         return None
 
@@ -317,7 +317,6 @@ class NARwhalResults:
         result = {"GOOD":0, "BAD":0, "UNKNOWN":0}
         for i in self._data:
             result[i.status] += 1
-        pprint.pprint(result)
         return result
 
     #counts statuses, prints them and returns a dictonary grouped by categories and subcategories
@@ -335,7 +334,6 @@ class NARwhalResults:
             if "UNKNOWN" not in result[i.category][i.subcategory]:
                 result[i.category][i.subcategory]["UNKNOWN"]=0
             result[i.category][i.subcategory][i.status] += 1
-        pprint.pprint(result)
         return result
 
 
@@ -561,7 +559,6 @@ class NARwhal:
                                     dbData.update_month = result.month
                                 if result.year is not None:
                                     dbData.update_year = result.year
-                            print(t,"|",dbData.NAR_href)
                     break
                 except (ConnectionError, ConnectionResetError, urllib3.exceptions.ProtocolError, requests.exceptions.ConnectionError, requests.exceptions.ConnectionError, requests.exceptions.ReadTimeout, requests.exceptions.ChunkedEncodingError, requests.exceptions.InvalidSchema, requests.exceptions.ChunkedEncodingError, socket.timeout, http.client.IncompleteRead, requests.exceptions.ContentDecodingError) as e:
                     pass
@@ -634,9 +631,9 @@ def main():
     #Fetches data from NAR website and database websites and stores results in a file
     #Following 3 lines can be commented out after fetching data, loading data from file is a lot faster
     #It can take about 5-10 minutes to fetch results from NAR website.
-    narv = NARwhal()
-    narv.loadFromNARwebsite(retryCount=2, retrySleep=5, singleRequestTimeout=15, limit=-1, skip=0,)
-    narv.save("data.txt")
+    #narv = NARwhal()
+    #narv.loadFromNARwebsite(retryCount=2, retrySleep=5, singleRequestTimeout=15, limit=-1, skip=0,)
+    #narv.save("data.txt")
 
     #Loads data from a file.
     narv = NARwhal()
@@ -645,7 +642,7 @@ def main():
     #returns a copy of results, leaving data in narv unchanged
     r = narv.results()
     #returns the number of GOOD, BAD and UNKNOWN databases.
-    r.count_status()
+    pprint.pprint(r.count_status())
 
     #optional data filtering, changes the original array
     r.removeIf(RemoveCondition.BAD_OR_UNKNOWN_STATUS)
@@ -666,9 +663,9 @@ def main():
     r.getData()
 
     #returns the number of GOOD, BAD and UNKNOWN databases after filtering
-    r.count_status()
+    pprint.pprint(r.count_status())
 
     #summary of statuses, in a dict object. Also provides information about categories and subcategories.
-    r.count_statusSummary()
+    pprint.pprint(r.count_statusSummary())
 
 main()
